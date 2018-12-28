@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html><head>
+  <meta charset="utf-8">
+  <title>hwcrypto.js demo &amp; test page</title>
+  <script src="bower_components/jquery/dist/jquery.min.js"></script>
+  <script src="bower_components/hwcrypto/hwcrypto-legacy.js"></script>
+  <script src="bower_components/hwcrypto/hwcrypto.js"></script>
+  <script src="hex2base.js"></script>
+  <link rel="stylesheet" href="bower_components/font-awesome/css/font-awesome.min.css">
+
+  <style type="text/css">
+    body {font-family: Georgia, serif; margin: 2em;}
+    .sadface {font-size: 9em;}
+    code {font-family: monospace;}
+  </style>
+
+  <script>
+    var hashes = {};
+    hashes['SHA-1'] = 'c33df55b8aee82b5018130f61a9199f6a9d5d385';
+    hashes['SHA-224'] = '614eadb55ecd6c4938fe23a450edd51292519f7ffb51e91dc8aa5fbe';
+    hashes['SHA-256'] = '413140d54372f9baf481d4c54e2d5c7bcf28fd6087000280e07976121dd54af2';
+    hashes['SHA-384'] = '71839e04e1f8c6e3a6697e27e9a7b8aff24c95358ea7dc7f98476c1e4d88c67d65803d175209689af02aa3cbf69f2fd3';
+    hashes['SHA-512'] = 'c793dc32d969cd4982a1d6e630de5aa0ebcd37e3b8bd0095f383a839582b080b9fe2d00098844bd303b8736ca1000344c5128ea38584bbed2d77a3968c7cdd71';
+    hashes['SHA-192'] = 'ad41e82bcff23839dc0d9683d46fbae0be3dfcbbb1b49c70';
+
+    function log_text(s) {
+        var d = document.createElement("div");
+        d.innerHTML = s;
+        document.getElementById('log').appendChild(d);
+    }
+
+    function debug() {
+        window.hwcrypto.debug().then(function(response) {log_text("Debug: " + response);});
+    }
+
+    function sign() {
+        // Clear log
+        document.getElementById('log').innerHTML = '';
+        // Timestamp
+        log_text("sign() clicked on " + new Date().toUTCString());
+        // Select hash
+        var hashtype = $("input[name=hash]:checked").val();
+        // Set backend if asked
+        var backend =  $("input[name=backend]:checked").val()
+        // get language
+        var lang = $("input[name=lang]:checked").val();
+        if (!window.hwcrypto.use(backend)) {
+          log_text("Selecting backend failed.");
+        }
+
+        var hash = $("#hashvalue").val();
+        log_text("Signing " + hashtype + ": " + hash);
+        // debug
+        window.hwcrypto.debug().then(function(response) {
+          log_text("Debug: " + response);
+        }, function(err) {
+            log_text("debug() failed: " + err);
+            return;
+        });
+
+        // Sign
+        window.hwcrypto.getCertificate({lang: lang}).then(function(response) {
+            var cert = response;
+            log_text("Using certificate:\n" + hexToPem(response.hex));
+            window.hwcrypto.sign(cert, {type: hashtype, hex: hash}, {lang: lang}).then(function(response) {
+                log_text("Generated signature:\n" + response.hex.match(/.{1,64}/g).join("\n"));
+            }, function(err) {
+                log_text("sign() failed: " + err);
+            });
+        }, function(err) {
+            log_text("getCertificate() failed: " + err);
+        });
+    }
+</script>
+<script type="text/javascript">// Promises 
+var _eid_promises = {}; 
+// Turn the incoming message from extension 
+// into pending Promise resolving 
+window.addEventListener("message", function(event) { 
+    if(event.source !== window) return; 
+    if(event.data.src && (event.data.src === "background.js")) { 
+        console.log("Page received: "); 
+        console.log(event.data); 
+        // Get the promise 
+        if(event.data.nonce) { 
+            var p = _eid_promises[event.data.nonce]; 
+            // resolve 
+            if(event.data.result === "ok") { 
+                if(event.data.signature !== undefined) { 
+                    p.resolve({hex: event.data.signature}); 
+                } else if(event.data.version !== undefined) { 
+                    p.resolve(event.data.extension + "/" + event.data.version); 
+                } else if(event.data.cert !== undefined) { 
+                    p.resolve({hex: event.data.cert}); 
+                } else { 
+                    console.log("No idea how to handle message"); 
+                    console.log(event.data); 
+                } 
+            } else { 
+                // reject 
+                p.reject(new Error(event.data.result)); 
+            } 
+            delete _eid_promises[event.data.nonce]; 
+        } else { 
+            console.log("No nonce in event msg"); 
+        } 
+    } 
+}, false); 
+ 
+ 
+function TokenSigning() { 
+    function nonce() { 
+        var val = ""; 
+        var hex = "abcdefghijklmnopqrstuvwxyz0123456789"; 
+        for(var i = 0; i < 16; i++) val += hex.charAt(Math.floor(Math.random() * hex.length)); 
+        return val; 
+    } 
+ 
+    function messagePromise(msg) { 
+        return new Promise(function(resolve, reject) { 
+            // amend with necessary metadata 
+            msg["nonce"] = nonce(); 
+            msg["src"] = "page.js"; 
+            // send message 
+            window.postMessage(msg, "*"); 
+            // and store promise callbacks 
+            _eid_promises[msg.nonce] = { 
+                resolve: resolve, 
+                reject: reject 
+            }; 
+        }); 
+    } 
+    this.getCertificate = function(options) { 
+        var msg = {type: "CERT", lang: options.lang, filter: options.filter}; 
+        console.log("getCertificate()"); 
+        return messagePromise(msg); 
+    }; 
+    this.sign = function(cert, hash, options) { 
+        var msg = {type: "SIGN", cert: cert.hex, hash: hash.hex, hashtype: hash.type, lang: options.lang, info: options.info}; 
+        console.log("sign()"); 
+        return messagePromise(msg); 
+    }; 
+    this.getVersion = function() { 
+        console.log("getVersion()"); 
+        return messagePromise({ 
+            type: "VERSION" 
+        }); 
+    }; 
+}</script></head>
+<body>
+  <noscript>
+    <center>
+    <i class="fa fa-frown-o sadface" aria-hidden="true"></i>
+    <h1>JavaScript is disabled</h1>
+    <p>Please enable javascript and refresh the page</p>
+    <p><a href="http://enable-javascript.com">Instructions are available on
+    <b>enable-javascript.com</b></a></p>
+    </center>
+  </noscript>
+  <script>
+    $(document).ready(function() {
+       $("#scripton").show();
+       $("input[type=radio][name=hash]").change(function() {
+         $("#hashvalue").val(hashes[$("input[name=hash]:checked").val()]);
+       });
+       $("#hashvalue").val(hashes[$("input[name=hash]:checked").val()]);
+    });
+  </script>
+  <div id="scripton" style="">
+   <p>This is a
+     <b><script>document.write(window.location.protocol.substring(0, window.location.protocol.length-1).toUpperCase());</script>HTTPS</b> test page for
+     <a href="bower_components/hwcrypto/hwcrypto.js">hwcrypto.js</a> (<a href="https://github.com/hwcrypto/hwcrypto.js/wiki">more information</a>)
+     implementing <a href="https://github.com/hwcrypto/hwcrypto.js/wiki/ModernAPI">API v0.1</a>
+   </p>
+
+   <h1>sign()</h1>
+   Choose parameters:
+   <ul>
+   <li><b>HASH</b>:
+
+     <input type="radio" name="hash" value="SHA-1">SHA-1
+     <input type="radio" name="hash" value="SHA-224">SHA-224
+     <input type="radio" name="hash" value="SHA-256" checked="">SHA-256
+     <input type="radio" name="hash" value="SHA-384">SHA-384
+     <input type="radio" name="hash" value="SHA-512">SHA-512 
+     <input type="radio" name="hash" value="SHA-192">"SHA-192" (erronoeus) 
+     <br>
+     <input id="hashvalue" type="text" size="200">
+   </li>
+
+   <li><b>LANGUAGE</b>:
+     <input type="radio" name="lang" value="en" checked="">English
+     <input type="radio" name="lang" value="et">eesti
+     <input type="radio" name="lang" value="ru">русский
+     <input type="radio" name="lang" value="sw">Swahili
+   </li>
+   <li><b>BACKEND</b>:
+     <input type="radio" name="backend" value="auto" checked="">autodetect
+     <input type="radio" name="backend" value="npapi">legacy NPAPI
+     <input type="radio" name="backend" value="chrome">chrome-token-signing
+   </li>
+   </ul>
+   <p>
+     <button id="click1" onclick="sign();"><code>hwcrypto<b>.sign()</b></code></button>
+     (This asks the user for a certificate via <code>hwcrypto.getCertificate()</code> and uses it to sign a hash specified above)
+   </p>
+   <p><button id="click2" onclick="debug();"><code>hwcrypto<b>.debug()</b></code></button> | <button id="click3" onclick="document.getElementById('log').innerHTML=''">Clear log</button></p>
+
+   <hr>
+   <script>document.write("<pre>This test page is running on\n" + navigator.userAgent + "</pre>");</script><pre>This test page is running on
+Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36</pre>
+   <div id="log" style="white-space: pre; font-family: monospace;"></div>
+ </div>
+
+
+</body></html>
